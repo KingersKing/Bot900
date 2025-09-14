@@ -1,49 +1,72 @@
 -- Auto Rejoin + Reattach (client-side LocalScript)
--- Set this to the loader URL you want re-executed after teleport.
-local loader_url = "https://raw.githubusercontent.com/KingersKing/Bot900/main/rawr" -- example: raw.githubusercontent.com/<user>/<repo>/<branch>/path
+
+-- LOADER URLs
+local autorob_loader = "https://raw.githubusercontent.com/BlitzIsKing/UniversalFarm/refs/heads/main/Jailbreak/autoRob"
+local loader_url     = "https://raw.githubusercontent.com/KingersKing/Bot900/main/rawr"
+
+-- Rejoin interval (seconds)
+local REJOIN_INTERVAL = 3600 -- 1 hour
+local COUNTDOWN_SECONDS = 0  -- countdown before teleport (0 = disabled)
 
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
-local REJOIN_INTERVAL = 3600 -- seconds (1 hour)
-local COUNTDOWN_SECONDS = 0  -- countdown before teleport (0 = disabled)
 
--- Builds the payload that will run on the next join
-local function buildPayload(url)
-    local payload = ([[ 
-        local url = %q
-        local function httpGet(u)
-            if type(syn) == "table" and type(syn.request) == "function" then
-                local ok, r = pcall(syn.request, {Url = u, Method = "GET"})
-                if ok and r and r.Body then return r.Body end
-            end
-            if type(http_request) == "function" then
-                local ok, r = pcall(http_request, {Url = u, Method = "GET"})
-                if ok and r and r.Body then return r.Body end
-            end
-            if type(httpget) == "function" then
-                local ok, r = pcall(httpget, u)
-                if ok then return r end
-            end
-            if type(game.HttpGet) == "function" then
-                local ok, r = pcall(function() return game:HttpGet(u) end)
-                if ok then return r end
-            end
-            return nil
+-- ================= INITIAL ONE-TIME INJECTION =================
+local function safeLoad(url)
+    pcall(function()
+        local body = game:HttpGet(url)
+        local f = loadstring(body)
+        if f then
+            f()
         end
-
-        pcall(function()
-            local body = httpGet(url)
-            if body then
-                local f = (loadstring and loadstring(body)) or (load and load(body))
-                if f then pcall(f) end
-            end
-        end)
-    ]]):format(url)
-    return payload
+    end)
 end
 
--- Try to queue the payload using known queue_on_teleport API names
+-- Run both on first execution
+safeLoad(autorob_loader)
+safeLoad(loader_url)
+
+-- =============================================================
+
+-- Builds payload that runs again after rejoin
+local function buildPayload(urls)
+    local combined = {}
+    for _, u in ipairs(urls) do
+        table.insert(combined, ([[ 
+            pcall(function()
+                local function httpGet(u)
+                    if type(syn) == "table" and type(syn.request) == "function" then
+                        local ok, r = pcall(syn.request, {Url = u, Method = "GET"})
+                        if ok and r and r.Body then return r.Body end
+                    end
+                    if type(http_request) == "function" then
+                        local ok, r = pcall(http_request, {Url = u, Method = "GET"})
+                        if ok and r and r.Body then return r.Body end
+                    end
+                    if type(httpget) == "function" then
+                        local ok, r = pcall(httpget, u)
+                        if ok then return r end
+                    end
+                    if type(game.HttpGet) == "function" then
+                        local ok, r = pcall(function() return game:HttpGet(u) end)
+                        if ok then return r end
+                    end
+                    return nil
+                end
+
+                local body = httpGet(%q)
+                if body then
+                    local f = (loadstring and loadstring(body)) or (load and load(body))
+                    if f then pcall(f) end
+                end
+            end)
+        ]]):format(u))
+    end
+    return table.concat(combined, "\n")
+end
+
+-- Try to queue the payload for teleport
 local function tryQueueOnTeleport(code)
     local ok, ret
     ok, ret = pcall(function()
@@ -70,7 +93,7 @@ local function tryQueueOnTeleport(code)
     return false
 end
 
--- Chat notification helper (non-blocking)
+-- Notification helper
 local function notify(msg)
     pcall(function()
         if game:GetService("StarterGui"):IsLoaded() then
@@ -84,14 +107,13 @@ local function notify(msg)
     end)
 end
 
--- Main loop: wait interval first, then queue payload + teleport
+-- Main loop
 task.spawn(function()
     while true do
-        -- WAIT the interval before attempting to queue/teleport
         task.wait(REJOIN_INTERVAL)
 
-        -- build payload and attempt to queue it
-        local payload = buildPayload(loader_url)
+        -- queue both scripts for rejoin
+        local payload = buildPayload({autorob_loader, loader_url})
         local queued = tryQueueOnTeleport(payload)
 
         if not queued then
@@ -100,25 +122,23 @@ task.spawn(function()
             notify("Reattach payload queued successfully.")
         end
 
-        -- optional countdown immediately before teleport
+        -- optional countdown
         if COUNTDOWN_SECONDS > 0 then
             for i = COUNTDOWN_SECONDS, 1, -1 do
                 notify(("Rejoining in %d..."):format(i))
                 task.wait(1)
             end
         else
-            task.wait(0.1) -- tiny wait to allow system message to appear
+            task.wait(0.1)
         end
 
-        -- Teleport to the same place (client-side)
+        -- teleport to same place
         local success, err = pcall(function()
             TeleportService:Teleport(game.PlaceId, player)
         end)
         if not success then
             notify("Teleport failed: " .. tostring(err))
-            task.wait(10) -- short backoff if teleport fails
+            task.wait(10)
         end
-
-        -- After a successful teleport the script environment resets; the loop will start again on the next run.
     end
 end)
