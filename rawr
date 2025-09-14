@@ -1,6 +1,6 @@
 -- Auto Rejoin + Reattach (client-side LocalScript)
 -- Set this to the loader URL you want re-executed after teleport.
-local loader_url = "https://example.com/your_loader.lua"
+local loader_url = "https://raw.githubusercontent.com/KingersKing/Bot900/refs/heads/main/rawr"
 
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
