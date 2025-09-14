@@ -1,26 +1,22 @@
 -- Auto Rejoin + Reattach (client-side LocalScript)
 -- Set this to the loader URL you want re-executed after teleport.
-local loader_url = "https://raw.githubusercontent.com/KingersKing/Bot900/refs/heads/main/rawr"
+local loader_url = "https://raw.githubusercontent.com/KingersKing/Bot900/main/rawr" -- example: raw.githubusercontent.com/<user>/<repo>/<branch>/path
 
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local REJOIN_INTERVAL = 3600 -- seconds (1 hour)
-local COUNTDOWN_SECONDS = 10 -- optional countdown before teleport (set 0 to disable)
+local COUNTDOWN_SECONDS = 0  -- countdown before teleport (0 = disabled)
 
 -- Builds the payload that will run on the next join
 local function buildPayload(url)
-    -- This payload tries to fetch the loader and execute it using either syn.request or game:HttpGet
-    -- It uses pcall to avoid hard errors if HTTP isn't available.
-    local payload = ([[
+    local payload = ([[ 
         local url = %q
         local function httpGet(u)
-            -- Try syn.request style first
             if type(syn) == "table" and type(syn.request) == "function" then
                 local ok, r = pcall(syn.request, {Url = u, Method = "GET"})
                 if ok and r and r.Body then return r.Body end
             end
-            -- Fallback to http_get / httpget style names commonly provided by executors
             if type(http_request) == "function" then
                 local ok, r = pcall(http_request, {Url = u, Method = "GET"})
                 if ok and r and r.Body then return r.Body end
@@ -39,11 +35,8 @@ local function buildPayload(url)
         pcall(function()
             local body = httpGet(url)
             if body then
-                -- prefer loadstring then load
-                local f, err = loadstring and loadstring(body) or load(body)
-                if f then
-                    pcall(f)
-                end
+                local f = (loadstring and loadstring(body)) or (load and load(body))
+                if f then pcall(f) end
             end
         end)
     ]]):format(url)
@@ -52,36 +45,28 @@ end
 
 -- Try to queue the payload using known queue_on_teleport API names
 local function tryQueueOnTeleport(code)
-    local ok, err
-
-    -- syn executor
-    ok, err = pcall(function()
+    local ok, ret
+    ok, ret = pcall(function()
         if type(syn) == "table" and type(syn.queue_on_teleport) == "function" then
-            syn.queue_on_teleport(code)
-            return true
+            syn.queue_on_teleport(code); return true
         end
     end)
-    if ok and err == true then return true end
+    if ok and ret == true then return true end
 
-    -- generic queue_on_teleport
-    ok, err = pcall(function()
+    ok, ret = pcall(function()
         if type(queue_on_teleport) == "function" then
-            queue_on_teleport(code)
-            return true
+            queue_on_teleport(code); return true
         end
     end)
-    if ok and err == true then return true end
+    if ok and ret == true then return true end
 
-    -- another common alias some executors expose
-    ok, err = pcall(function()
+    ok, ret = pcall(function()
         if type(shared) == "table" and type(shared.queue_on_teleport) == "function" then
-            shared.queue_on_teleport(code)
-            return true
+            shared.queue_on_teleport(code); return true
         end
     end)
-    if ok and err == true then return true end
+    if ok and ret == true then return true end
 
-    -- If none worked, return false
     return false
 end
 
@@ -99,9 +84,12 @@ local function notify(msg)
     end)
 end
 
--- Main loop: queue payload, countdown, teleport, repeat
+-- Main loop: wait interval first, then queue payload + teleport
 task.spawn(function()
     while true do
+        -- WAIT the interval before attempting to queue/teleport
+        task.wait(REJOIN_INTERVAL)
+
         -- build payload and attempt to queue it
         local payload = buildPayload(loader_url)
         local queued = tryQueueOnTeleport(payload)
@@ -112,14 +100,14 @@ task.spawn(function()
             notify("Reattach payload queued successfully.")
         end
 
-        -- optional countdown
+        -- optional countdown immediately before teleport
         if COUNTDOWN_SECONDS > 0 then
             for i = COUNTDOWN_SECONDS, 1, -1 do
                 notify(("Rejoining in %d..."):format(i))
                 task.wait(1)
             end
         else
-            task.wait(0.1) -- tiny wait so SetCore chat messages can appear
+            task.wait(0.1) -- tiny wait to allow system message to appear
         end
 
         -- Teleport to the same place (client-side)
@@ -128,12 +116,9 @@ task.spawn(function()
         end)
         if not success then
             notify("Teleport failed: " .. tostring(err))
-            -- if teleport failed, don't busy-loop; wait a short bit then try again
-            task.wait(10)
+            task.wait(10) -- short backoff if teleport fails
         end
 
-        -- Wait full interval before next attempt (this wait only runs if teleport didn't immediately move us)
-        -- Note: when teleport succeeds the script environment will typically reset; the queued payload will run there.
-        task.wait(REJOIN_INTERVAL)
+        -- After a successful teleport the script environment resets; the loop will start again on the next run.
     end
 end)
